@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store
+
+# VS Code
+.vscode/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Secrets
+.env
+*.env
+
+# Local datasets
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Model checkpoints
+models/*
+!models/.gitkeep
+
+# Hugging Face cache
+.cache/
+huggingface/
+
+# MLflow - later
+mlruns/
+
+# Logs
+logs/
+*.log
+
+# Model weights
+*.pt
+*.pth
+*.bin
+*.safetensors
