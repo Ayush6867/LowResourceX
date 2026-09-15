@@ -1,0 +1,2 @@
+experiment,model,train_samples,epochs,batch_size,learning_rate,english_accuracy,hindi_accuracy,transfer_gap,seed
+baseline_10k,bert-base-multilingual-cased,10000,1,16,2e-5,0.7052,0.5695,0.1357,42
