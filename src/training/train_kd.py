@@ -193,13 +193,10 @@ def select_subset(
 
 
 # ============================================================
-# Custom raw-text collator
+# Raw-text collator
 #
-# Important:
-# Teacher and student use DIFFERENT tokenizers.
-#
-# Therefore we keep raw premise/hypothesis text until
-# inside the training loop.
+# Teacher and student use different tokenizers.
+# Therefore raw text must be kept until training/evaluation.
 # ============================================================
 
 def raw_collate_fn(examples):
@@ -259,7 +256,7 @@ def tokenize_batch(
 
 
 # ============================================================
-# Evaluation
+# Student evaluation
 # ============================================================
 
 def evaluate_student(
@@ -308,11 +305,9 @@ def evaluate_student(
                 outputs.loss.item()
             )
 
-            batch_predictions = (
-                torch.argmax(
-                    outputs.logits,
-                    dim=-1,
-                )
+            batch_predictions = torch.argmax(
+                outputs.logits,
+                dim=-1,
             )
 
             predictions.extend(
@@ -355,7 +350,7 @@ def evaluate_student(
 
 
 # ============================================================
-# KD training
+# One epoch of KD training
 # ============================================================
 
 def train_one_epoch(
@@ -373,10 +368,10 @@ def train_one_epoch(
     total_epochs,
 ):
 
-    # Teacher must never train.
+    # Teacher never trains.
     teacher.eval()
 
-    # Student is the model being trained.
+    # Student trains.
     student.train()
 
     total_loss_sum = 0.0
@@ -427,9 +422,6 @@ def train_one_epoch(
 
         # ----------------------------------------------------
         # Teacher forward pass
-        #
-        # no_grad() is critical.
-        # We are NOT training the teacher.
         # ----------------------------------------------------
 
         with torch.no_grad():
@@ -455,7 +447,7 @@ def train_one_epoch(
         )
 
         # ----------------------------------------------------
-        # Hard-label cross-entropy loss
+        # Hard-label loss
         # ----------------------------------------------------
 
         ce_loss = F.cross_entropy(
@@ -464,7 +456,7 @@ def train_one_epoch(
         )
 
         # ----------------------------------------------------
-        # Temperature-scaled teacher probabilities
+        # Teacher soft targets
         # ----------------------------------------------------
 
         teacher_probabilities = F.softmax(
@@ -473,7 +465,7 @@ def train_one_epoch(
         )
 
         # ----------------------------------------------------
-        # Temperature-scaled student log probabilities
+        # Student soft predictions
         # ----------------------------------------------------
 
         student_log_probabilities = (
@@ -493,7 +485,7 @@ def train_one_epoch(
             reduction="batchmean",
         )
 
-        # Standard temperature correction.
+        # Temperature correction.
         kd_loss = (
             kd_loss
             * (temperature ** 2)
@@ -567,7 +559,7 @@ def train_one_epoch(
 
 
 # ============================================================
-# Save results
+# Save experiment information
 # ============================================================
 
 def save_results(
@@ -611,6 +603,10 @@ def main():
 
     args = parse_args()
 
+    # --------------------------------------------------------
+    # Validate arguments
+    # --------------------------------------------------------
+
     if not 0.0 <= args.alpha <= 1.0:
 
         raise ValueError(
@@ -630,13 +626,21 @@ def main():
         raise FileNotFoundError(
             "\nTeacher model directory was not found:\n"
             f"{args.teacher_dir}\n\n"
-            "Train the teacher first or restore the "
-            "checkpoint before running KD."
+            "Train the teacher first or restore "
+            "its checkpoint."
         )
+
+    # --------------------------------------------------------
+    # Reproducibility
+    # --------------------------------------------------------
 
     set_seed(
         args.seed
     )
+
+    # --------------------------------------------------------
+    # Device
+    # --------------------------------------------------------
 
     device = get_device()
 
@@ -690,7 +694,13 @@ def main():
     )
 
     print(
-        f"Alpha: {args.alpha}"
+        f"Weight decay: "
+        f"{args.weight_decay}"
+    )
+
+    print(
+        f"Alpha: "
+        f"{args.alpha}"
     )
 
     print(
@@ -699,7 +709,13 @@ def main():
     )
 
     print(
-        f"Seed: {args.seed}"
+        f"Maximum length: "
+        f"{args.max_length}"
+    )
+
+    print(
+        f"Seed: "
+        f"{args.seed}"
     )
 
     print(
@@ -745,7 +761,6 @@ def main():
 
     teacher.eval()
 
-    # Freeze teacher parameters permanently.
     for parameter in teacher.parameters():
 
         parameter.requires_grad = False
@@ -791,7 +806,7 @@ def main():
     )
 
     # --------------------------------------------------------
-    # Dataset
+    # Load datasets
     # --------------------------------------------------------
 
     print(
@@ -812,6 +827,10 @@ def main():
         "hi",
     )
 
+    # --------------------------------------------------------
+    # Create controlled subsets
+    # --------------------------------------------------------
+
     english_train = select_subset(
         dataset=english_dataset["train"],
         sample_size=args.train_samples,
@@ -819,17 +838,13 @@ def main():
     )
 
     english_validation = select_subset(
-        dataset=english_dataset[
-            "validation"
-        ],
+        dataset=english_dataset["validation"],
         sample_size=args.validation_samples,
         seed=args.seed,
     )
 
     hindi_validation = select_subset(
-        dataset=hindi_dataset[
-            "validation"
-        ],
+        dataset=hindi_dataset["validation"],
         sample_size=args.validation_samples,
         seed=args.seed,
     )
@@ -874,28 +889,24 @@ def main():
         ),
     )
 
-    english_validation_loader = (
-        DataLoader(
-            english_validation,
-            batch_size=args.batch_size,
-            shuffle=False,
-            collate_fn=raw_collate_fn,
-            pin_memory=(
-                device.type == "cuda"
-            ),
-        )
+    english_validation_loader = DataLoader(
+        english_validation,
+        batch_size=args.batch_size,
+        shuffle=False,
+        collate_fn=raw_collate_fn,
+        pin_memory=(
+            device.type == "cuda"
+        ),
     )
 
-    hindi_validation_loader = (
-        DataLoader(
-            hindi_validation,
-            batch_size=args.batch_size,
-            shuffle=False,
-            collate_fn=raw_collate_fn,
-            pin_memory=(
-                device.type == "cuda"
-            ),
-        )
+    hindi_validation_loader = DataLoader(
+        hindi_validation,
+        batch_size=args.batch_size,
+        shuffle=False,
+        collate_fn=raw_collate_fn,
+        pin_memory=(
+            device.type == "cuda"
+        ),
     )
 
     # --------------------------------------------------------
@@ -909,7 +920,7 @@ def main():
     )
 
     # --------------------------------------------------------
-    # Student before training
+    # Student before KD
     # --------------------------------------------------------
 
     print(
@@ -947,12 +958,18 @@ def main():
     )
 
     # --------------------------------------------------------
-    # Training
+    # Training history
     # --------------------------------------------------------
 
     history = []
 
     best_english_accuracy = -1.0
+
+    best_epoch_results = None
+
+    # --------------------------------------------------------
+    # KD training
+    # --------------------------------------------------------
 
     print(
         "\n========================================"
@@ -1010,7 +1027,7 @@ def main():
         )
 
         # ----------------------------------------------------
-        # Student evaluation
+        # Evaluate student
         # ----------------------------------------------------
 
         english_results = evaluate_student(
@@ -1045,7 +1062,12 @@ def main():
             f"{transfer_gap:.4f}"
         )
 
+        # ----------------------------------------------------
+        # Save metrics for this epoch
+        # ----------------------------------------------------
+
         epoch_results = {
+
             "epoch": epoch,
 
             "training_total_loss": (
@@ -1096,8 +1118,13 @@ def main():
         )
 
         # ----------------------------------------------------
-        # Save according to English validation only.
-        # Hindi must NOT decide checkpoint selection.
+        # BEST CHECKPOINT SELECTION
+        #
+        # IMPORTANT:
+        # English validation accuracy decides which model
+        # is saved.
+        #
+        # Hindi does NOT decide checkpoint selection.
         # ----------------------------------------------------
 
         if (
@@ -1111,12 +1138,23 @@ def main():
                 ]
             )
 
+            # IMPORTANT FIX:
+            # Save metrics belonging to this same checkpoint.
+            best_epoch_results = (
+                epoch_results.copy()
+            )
+
             print(
                 "\nNew best KD student."
             )
 
             print(
-                f"Saving to "
+                f"Best epoch so far: "
+                f"{epoch}"
+            )
+
+            print(
+                f"Saving checkpoint to "
                 f"{args.output_dir}"
             )
 
@@ -1134,21 +1172,42 @@ def main():
             )
 
     # --------------------------------------------------------
-    # Final output
+    # Safety check
     # --------------------------------------------------------
 
-    final_results = history[-1]
+    if best_epoch_results is None:
+
+        raise RuntimeError(
+            "No best checkpoint was selected."
+        )
+
+    # --------------------------------------------------------
+    # FINAL RESULTS
+    #
+    # IMPORTANT FIX:
+    # Report the metrics from the BEST checkpoint,
+    # not automatically from the last epoch.
+    # --------------------------------------------------------
+
+    final_results = (
+        best_epoch_results
+    )
 
     print(
         "\n========================================"
     )
 
     print(
-        "FINAL KD RESULTS"
+        "BEST KD CHECKPOINT RESULTS"
     )
 
     print(
         "========================================"
+    )
+
+    print(
+        f"Best epoch: "
+        f"{final_results['epoch']}"
     )
 
     print(
@@ -1167,55 +1226,91 @@ def main():
     )
 
     print(
-        "Best English validation accuracy: "
-        f"{best_english_accuracy:.4f}"
+        "English loss: "
+        f"{final_results['english_loss']:.4f}"
     )
+
+    print(
+        "Hindi loss: "
+        f"{final_results['hindi_loss']:.4f}"
+    )
+
+    # --------------------------------------------------------
+    # Save metadata
+    # --------------------------------------------------------
 
     experiment_results = {
 
-        "teacher": args.teacher_dir,
+        "teacher": (
+            args.teacher_dir
+        ),
 
-        "student": STUDENT_MODEL_NAME,
+        "student": (
+            STUDENT_MODEL_NAME
+        ),
 
         "configuration": {
+
             "train_samples": (
                 args.train_samples
             ),
+
             "validation_samples": (
                 args.validation_samples
             ),
+
             "batch_size": (
                 args.batch_size
             ),
+
             "epochs": (
                 args.epochs
             ),
+
             "learning_rate": (
                 args.learning_rate
             ),
+
             "weight_decay": (
                 args.weight_decay
             ),
+
             "max_length": (
                 args.max_length
             ),
+
             "alpha": (
                 args.alpha
             ),
+
             "temperature": (
                 args.temperature
             ),
+
             "seed": (
                 args.seed
             ),
         },
 
         "before_training": {
-            "english": before_english,
-            "hindi": before_hindi,
+
+            "english": (
+                before_english
+            ),
+
+            "hindi": (
+                before_hindi
+            ),
         },
 
+        # Results for every epoch
         "history": history,
+
+        # Metrics corresponding exactly to
+        # the saved checkpoint.
+        "best_checkpoint": (
+            best_epoch_results
+        ),
 
         "best_english_accuracy": (
             best_english_accuracy
