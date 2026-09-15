@@ -1,5 +1,2 @@
-experiment,model,train_samples,epochs,batch_size,learning_rate,alpha,temperature,english_accuracy,hindi_accuracy,transfer_gap,seed
-baseline_10k,bert-base-multilingual-cased,10000,1,16,2e-5,,,0.7052,0.5695,0.1357,42
-kd_10k_a025_t2,bert-base-multilingual-cased,10000,1,16,2e-5,0.25,2.0,0.7096,0.5699,0.1398,42
-kd_10k_a05_t2,bert-base-multilingual-cased,10000,1,16,2e-5,0.5,2.0,0.7153,0.5847,0.1305,42
-kd_10k_a075_t2,bert-base-multilingual-cased,10000,1,16,2e-5,0.75,2.0,0.7141,0.5847,0.1293,42
+baseline_1k,bert-base-multilingual-cased,1000,3,16,2e-5,,,0.5904,0.4747,0.1157,42
+kd_1k_a05_t2,bert-base-multilingual-cased,1000,3,16,2e-5,0.5,2.0,0.6016,0.4169,0.1847,42
