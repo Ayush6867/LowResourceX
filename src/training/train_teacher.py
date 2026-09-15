@@ -20,6 +20,10 @@ from transformers import (
 )
 
 
+# ============================================================
+# Constants
+# ============================================================
+
 MODEL_NAME = "roberta-base"
 
 ID2LABEL = {
@@ -35,12 +39,16 @@ LABEL2ID = {
 }
 
 
+# ============================================================
+# Arguments
+# ============================================================
+
 def parse_args():
 
     parser = argparse.ArgumentParser(
         description=(
-            "Fine-tune an English RoBERTa teacher "
-            "on XNLI."
+            "Train an English RoBERTa XNLI "
+            "teacher model."
         )
     )
 
@@ -95,11 +103,15 @@ def parse_args():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="models/roberta_teacher_10k",
+        default="models/roberta_teacher",
     )
 
     return parser.parse_args()
 
+
+# ============================================================
+# Reproducibility
+# ============================================================
 
 def set_seed(seed):
 
@@ -111,16 +123,27 @@ def set_seed(seed):
         torch.cuda.manual_seed_all(seed)
 
 
+# ============================================================
+# Device
+# ============================================================
+
 def get_device():
 
     if torch.cuda.is_available():
         return torch.device("cuda")
 
-    if torch.backends.mps.is_available():
+    if (
+        hasattr(torch.backends, "mps")
+        and torch.backends.mps.is_available()
+    ):
         return torch.device("mps")
 
     return torch.device("cpu")
 
+
+# ============================================================
+# Dataset utilities
+# ============================================================
 
 def select_subset(
     dataset,
@@ -199,6 +222,10 @@ def prepare_dataset(
     return dataset
 
 
+# ============================================================
+# Evaluation
+# ============================================================
+
 def evaluate_model(
     model,
     dataloader,
@@ -226,7 +253,9 @@ def evaluate_model(
                 for key, value in batch.items()
             }
 
-            outputs = model(**batch)
+            outputs = model(
+                **batch
+            )
 
             total_loss += (
                 outputs.loss.item()
@@ -276,6 +305,10 @@ def evaluate_model(
     }
 
 
+# ============================================================
+# Training
+# ============================================================
+
 def train_one_epoch(
     model,
     dataloader,
@@ -308,7 +341,9 @@ def train_one_epoch(
             set_to_none=True
         )
 
-        outputs = model(**batch)
+        outputs = model(
+            **batch
+        )
 
         loss = outputs.loss
 
@@ -321,18 +356,22 @@ def train_one_epoch(
 
         optimizer.step()
 
-        total_loss += loss.item()
+        total_loss += (
+            loss.item()
+        )
 
         progress_bar.set_postfix(
             loss=f"{loss.item():.4f}"
         )
 
-    average_loss = (
+    return (
         total_loss / len(dataloader)
     )
 
-    return average_loss
 
+# ============================================================
+# Save results
+# ============================================================
 
 def save_results(
     output_dir,
@@ -344,13 +383,13 @@ def save_results(
         exist_ok=True,
     )
 
-    path = os.path.join(
+    results_path = os.path.join(
         output_dir,
         "results.json",
     )
 
     with open(
-        path,
+        results_path,
         "w",
         encoding="utf-8",
     ) as file:
@@ -362,9 +401,14 @@ def save_results(
         )
 
     print(
-        f"\nResults saved to: {path}"
+        f"\nResults saved to: "
+        f"{results_path}"
     )
 
+
+# ============================================================
+# Main
+# ============================================================
 
 def main():
 
@@ -416,8 +460,23 @@ def main():
     )
 
     print(
-        f"Seed: {args.seed}"
+        f"Weight decay: "
+        f"{args.weight_decay}"
     )
+
+    print(
+        f"Maximum length: "
+        f"{args.max_length}"
+    )
+
+    print(
+        f"Seed: "
+        f"{args.seed}"
+    )
+
+    # --------------------------------------------------------
+    # Device
+    # --------------------------------------------------------
 
     device = get_device()
 
@@ -433,6 +492,10 @@ def main():
             torch.cuda.get_device_name(0),
         )
 
+    # --------------------------------------------------------
+    # Tokenizer
+    # --------------------------------------------------------
+
     print(
         "\nLoading RoBERTa tokenizer..."
     )
@@ -442,6 +505,10 @@ def main():
             MODEL_NAME
         )
     )
+
+    # --------------------------------------------------------
+    # Dataset
+    # --------------------------------------------------------
 
     print(
         "\nLoading English XNLI..."
@@ -478,16 +545,16 @@ def main():
         "Preparing validation data..."
     )
 
-    validation_dataset = (
-        prepare_dataset(
-            dataset=dataset["validation"],
-            tokenizer=tokenizer,
-            sample_size=(
-                args.validation_samples
-            ),
-            max_length=args.max_length,
-            seed=args.seed,
-        )
+    validation_dataset = prepare_dataset(
+        dataset=dataset[
+            "validation"
+        ],
+        tokenizer=tokenizer,
+        sample_size=(
+            args.validation_samples
+        ),
+        max_length=args.max_length,
+        seed=args.seed,
     )
 
     print(
@@ -499,6 +566,10 @@ def main():
         "Prepared validation size:",
         len(validation_dataset),
     )
+
+    # --------------------------------------------------------
+    # DataLoader
+    # --------------------------------------------------------
 
     data_collator = (
         DataCollatorWithPadding(
@@ -534,6 +605,10 @@ def main():
         ),
     )
 
+    # --------------------------------------------------------
+    # Model
+    # --------------------------------------------------------
+
     print(
         "\nLoading RoBERTa teacher model..."
     )
@@ -552,13 +627,19 @@ def main():
         device
     )
 
+    # --------------------------------------------------------
+    # Optimizer
+    # --------------------------------------------------------
+
     optimizer = AdamW(
         model.parameters(),
         lr=args.learning_rate,
-        weight_decay=(
-            args.weight_decay
-        ),
+        weight_decay=args.weight_decay,
     )
+
+    # --------------------------------------------------------
+    # Before training
+    # --------------------------------------------------------
 
     print(
         "\n========================================"
@@ -578,9 +659,14 @@ def main():
         device=device,
     )
 
+    # --------------------------------------------------------
+    # Training
+    # --------------------------------------------------------
+
     history = []
 
     best_accuracy = -1.0
+    best_epoch_results = None
 
     print(
         "\n========================================"
@@ -623,13 +709,17 @@ def main():
         )
 
         epoch_results = {
+
             "epoch": epoch,
+
             "training_loss": float(
                 training_loss
             ),
+
             "validation_loss": (
                 validation_results["loss"]
             ),
+
             "validation_accuracy": (
                 validation_results[
                     "accuracy"
@@ -641,10 +731,12 @@ def main():
             epoch_results
         )
 
+        # ----------------------------------------------------
+        # Select best teacher checkpoint
+        # ----------------------------------------------------
+
         if (
-            validation_results[
-                "accuracy"
-            ]
+            validation_results["accuracy"]
             > best_accuracy
         ):
 
@@ -654,12 +746,21 @@ def main():
                 ]
             )
 
+            best_epoch_results = (
+                epoch_results.copy()
+            )
+
             print(
                 "\nNew best teacher."
             )
 
             print(
-                f"Saving to "
+                f"Best epoch so far: "
+                f"{epoch}"
+            )
+
+            print(
+                f"Saving checkpoint to "
                 f"{args.output_dir}"
             )
 
@@ -676,33 +777,89 @@ def main():
                 args.output_dir
             )
 
+    # --------------------------------------------------------
+    # Safety
+    # --------------------------------------------------------
+
+    if best_epoch_results is None:
+
+        raise RuntimeError(
+            "No best teacher checkpoint "
+            "was selected."
+        )
+
+    # --------------------------------------------------------
+    # Best checkpoint summary
+    # --------------------------------------------------------
+
+    print(
+        "\n========================================"
+    )
+
+    print(
+        "BEST TEACHER CHECKPOINT RESULTS"
+    )
+
+    print(
+        "========================================"
+    )
+
+    print(
+        f"Best epoch: "
+        f"{best_epoch_results['epoch']}"
+    )
+
+    print(
+        "Best English validation accuracy: "
+        f"{best_epoch_results['validation_accuracy']:.4f}"
+    )
+
+    print(
+        "English validation loss: "
+        f"{best_epoch_results['validation_loss']:.4f}"
+    )
+
+    # --------------------------------------------------------
+    # Save metadata
+    # --------------------------------------------------------
+
     experiment_results = {
 
         "model": MODEL_NAME,
 
         "configuration": {
+
             "train_samples": (
                 args.train_samples
             ),
+
             "validation_samples": (
                 args.validation_samples
             ),
+
             "batch_size": (
                 args.batch_size
             ),
+
             "epochs": (
                 args.epochs
             ),
+
             "learning_rate": (
                 args.learning_rate
             ),
+
             "weight_decay": (
                 args.weight_decay
             ),
+
             "max_length": (
                 args.max_length
             ),
-            "seed": args.seed,
+
+            "seed": (
+                args.seed
+            ),
         },
 
         "before_training": (
@@ -710,6 +867,10 @@ def main():
         ),
 
         "history": history,
+
+        "best_checkpoint": (
+            best_epoch_results
+        ),
 
         "best_validation_accuracy": (
             best_accuracy
@@ -722,20 +883,8 @@ def main():
     )
 
     print(
-        "\n========================================"
-    )
-
-    print(
-        "TEACHER TRAINING COMPLETE"
-    )
-
-    print(
-        "========================================"
-    )
-
-    print(
-        f"Best English validation accuracy: "
-        f"{best_accuracy:.4f}"
+        "\nTeacher training "
+        "completed successfully."
     )
 
 

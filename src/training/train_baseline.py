@@ -14,8 +14,8 @@ from datasets import load_dataset
 from sklearn.metrics import accuracy_score
 
 from transformers import (
-    AutoModelForSequenceClassification,
     AutoTokenizer,
+    AutoModelForSequenceClassification,
     DataCollatorWithPadding,
 )
 
@@ -25,12 +25,6 @@ from transformers import (
 # ============================================================
 
 MODEL_NAME = "bert-base-multilingual-cased"
-
-LABEL_NAMES = [
-    "entailment",
-    "neutral",
-    "contradiction",
-]
 
 ID2LABEL = {
     0: "entailment",
@@ -46,15 +40,15 @@ LABEL2ID = {
 
 
 # ============================================================
-# Command-line arguments
+# Arguments
 # ============================================================
 
 def parse_args():
 
     parser = argparse.ArgumentParser(
         description=(
-            "Train multilingual BERT on English XNLI "
-            "and evaluate zero-shot transfer to Hindi."
+            "Train mBERT on English XNLI and evaluate "
+            "zero-shot transfer to Hindi."
         )
     )
 
@@ -62,69 +56,54 @@ def parse_args():
         "--train-samples",
         type=int,
         default=2000,
-        help=(
-            "Number of English training examples. "
-            "Use 0 to use the entire training set."
-        ),
     )
 
     parser.add_argument(
         "--validation-samples",
         type=int,
         default=500,
-        help=(
-            "Number of validation examples per language. "
-            "Use 0 to use the complete validation set."
-        ),
     )
 
     parser.add_argument(
         "--batch-size",
         type=int,
         default=4,
-        help="Batch size used for training and evaluation.",
     )
 
     parser.add_argument(
         "--epochs",
         type=int,
         default=1,
-        help="Number of training epochs.",
     )
 
     parser.add_argument(
         "--learning-rate",
         type=float,
         default=2e-5,
-        help="AdamW learning rate.",
     )
 
     parser.add_argument(
         "--weight-decay",
         type=float,
         default=0.01,
-        help="AdamW weight decay.",
     )
 
     parser.add_argument(
         "--max-length",
         type=int,
         default=128,
-        help="Maximum tokenizer sequence length.",
     )
 
     parser.add_argument(
         "--seed",
         type=int,
         default=42,
-        help="Random seed for reproducibility.",
     )
 
     parser.add_argument(
         "--output-dir",
         type=str,
         default="models/mbert_xnli_baseline",
-        help="Directory where model and metrics are saved.",
     )
 
     return parser.parse_args()
@@ -153,7 +132,10 @@ def get_device():
     if torch.cuda.is_available():
         return torch.device("cuda")
 
-    if torch.backends.mps.is_available():
+    if (
+        hasattr(torch.backends, "mps")
+        and torch.backends.mps.is_available()
+    ):
         return torch.device("mps")
 
     return torch.device("cpu")
@@ -169,8 +151,6 @@ def select_subset(
     seed,
 ):
 
-    # sample_size <= 0 means:
-    # use the full split.
     if sample_size <= 0:
         return dataset
 
@@ -183,11 +163,11 @@ def select_subset(
 
         print(
             f"Requested {sample_size} examples, "
-            f"but dataset contains only {len(dataset)}."
+            f"but only {len(dataset)} exist."
         )
 
         print(
-            f"Using all {len(dataset)} examples instead."
+            f"Using all {len(dataset)} examples."
         )
 
     return (
@@ -195,53 +175,6 @@ def select_subset(
         .shuffle(seed=seed)
         .select(range(actual_size))
     )
-
-
-def tokenize_dataset(
-    dataset,
-    tokenizer,
-    max_length,
-):
-
-    def tokenize_batch(examples):
-
-        return tokenizer(
-            examples["premise"],
-            examples["hypothesis"],
-            truncation=True,
-            max_length=max_length,
-        )
-
-    dataset = dataset.map(
-        tokenize_batch,
-        batched=True,
-    )
-
-    # Raw text is no longer required by the model.
-    columns_to_remove = []
-
-    if "premise" in dataset.column_names:
-        columns_to_remove.append("premise")
-
-    if "hypothesis" in dataset.column_names:
-        columns_to_remove.append("hypothesis")
-
-    if columns_to_remove:
-
-        dataset = dataset.remove_columns(
-            columns_to_remove
-        )
-
-    # Hugging Face models expect the target column
-    # to be named "labels".
-    if "label" in dataset.column_names:
-
-        dataset = dataset.rename_column(
-            "label",
-            "labels",
-        )
-
-    return dataset
 
 
 def prepare_dataset(
@@ -258,11 +191,44 @@ def prepare_dataset(
         seed=seed,
     )
 
-    dataset = tokenize_dataset(
-        dataset=dataset,
-        tokenizer=tokenizer,
-        max_length=max_length,
+    def tokenize_batch(examples):
+
+        return tokenizer(
+            examples["premise"],
+            examples["hypothesis"],
+            truncation=True,
+            max_length=max_length,
+        )
+
+    dataset = dataset.map(
+        tokenize_batch,
+        batched=True,
     )
+
+    columns_to_remove = []
+
+    if "premise" in dataset.column_names:
+        columns_to_remove.append(
+            "premise"
+        )
+
+    if "hypothesis" in dataset.column_names:
+        columns_to_remove.append(
+            "hypothesis"
+        )
+
+    if columns_to_remove:
+
+        dataset = dataset.remove_columns(
+            columns_to_remove
+        )
+
+    if "label" in dataset.column_names:
+
+        dataset = dataset.rename_column(
+            "label",
+            "labels",
+        )
 
     return dataset
 
@@ -299,9 +265,13 @@ def evaluate_model(
                 for key, value in batch.items()
             }
 
-            outputs = model(**batch)
+            outputs = model(
+                **batch
+            )
 
-            total_loss += outputs.loss.item()
+            total_loss += (
+                outputs.loss.item()
+            )
 
             batch_predictions = torch.argmax(
                 outputs.logits,
@@ -348,7 +318,7 @@ def evaluate_model(
 
 
 # ============================================================
-# Training
+# One training epoch
 # ============================================================
 
 def train_one_epoch(
@@ -367,7 +337,8 @@ def train_one_epoch(
     progress_bar = tqdm(
         dataloader,
         desc=(
-            f"Epoch {epoch}/{total_epochs}"
+            f"Epoch "
+            f"{epoch}/{total_epochs}"
         ),
     )
 
@@ -378,63 +349,45 @@ def train_one_epoch(
             for key, value in batch.items()
         }
 
-        # ---------------------------------------
-        # Clear gradients from previous step
-        # ---------------------------------------
-
         optimizer.zero_grad(
             set_to_none=True
         )
 
-        # ---------------------------------------
-        # Forward pass
-        # ---------------------------------------
-
-        outputs = model(**batch)
+        outputs = model(
+            **batch
+        )
 
         loss = outputs.loss
 
-        # ---------------------------------------
-        # Backward pass
-        # ---------------------------------------
-
         loss.backward()
-
-        # ---------------------------------------
-        # Gradient clipping
-        # ---------------------------------------
 
         torch.nn.utils.clip_grad_norm_(
             model.parameters(),
             max_norm=1.0,
         )
 
-        # ---------------------------------------
-        # Update model parameters
-        # ---------------------------------------
-
         optimizer.step()
 
-        total_loss += loss.item()
+        total_loss += (
+            loss.item()
+        )
 
         progress_bar.set_postfix(
             loss=f"{loss.item():.4f}"
         )
 
-    average_loss = (
+    return (
         total_loss / len(dataloader)
     )
 
-    return average_loss
-
 
 # ============================================================
-# Save experiment information
+# Save results
 # ============================================================
 
-def save_metrics(
+def save_results(
     output_dir,
-    experiment_data,
+    results,
 ):
 
     os.makedirs(
@@ -442,62 +395,96 @@ def save_metrics(
         exist_ok=True,
     )
 
-    metrics_path = os.path.join(
+    results_path = os.path.join(
         output_dir,
         "results.json",
     )
 
     with open(
-        metrics_path,
+        results_path,
         "w",
         encoding="utf-8",
     ) as file:
 
         json.dump(
-            experiment_data,
+            results,
             file,
             indent=4,
         )
 
     print(
         f"\nMetrics saved to: "
-        f"{metrics_path}"
+        f"{results_path}"
     )
 
 
 # ============================================================
-# Main experiment
+# Main
 # ============================================================
 
 def main():
 
     args = parse_args()
 
-    set_seed(args.seed)
+    set_seed(
+        args.seed
+    )
 
-    # --------------------------------------------------------
-    # Configuration
-    # --------------------------------------------------------
+    print(
+        "\n========================================"
+    )
 
-    print("\n========================================")
-    print("LOWRESOURCEX - mBERT BASELINE")
-    print("========================================")
+    print(
+        "LOWRESOURCEX - mBERT BASELINE"
+    )
 
-    print(f"Model: {MODEL_NAME}")
-    print(f"Training samples: {args.train_samples}")
+    print(
+        "========================================"
+    )
+
+    print(
+        f"Model: {MODEL_NAME}"
+    )
+
+    print(
+        f"Training samples: "
+        f"{args.train_samples}"
+    )
+
     print(
         f"Validation samples: "
         f"{args.validation_samples}"
     )
-    print(f"Batch size: {args.batch_size}")
-    print(f"Epochs: {args.epochs}")
+
+    print(
+        f"Batch size: "
+        f"{args.batch_size}"
+    )
+
+    print(
+        f"Epochs: "
+        f"{args.epochs}"
+    )
+
     print(
         f"Learning rate: "
         f"{args.learning_rate}"
     )
-    print(f"Weight decay: {args.weight_decay}")
-    print(f"Maximum length: {args.max_length}")
-    print(f"Seed: {args.seed}")
+
+    print(
+        f"Weight decay: "
+        f"{args.weight_decay}"
+    )
+
+    print(
+        f"Maximum length: "
+        f"{args.max_length}"
+    )
+
+    print(
+        f"Seed: "
+        f"{args.seed}"
+    )
 
     # --------------------------------------------------------
     # Device
@@ -505,8 +492,10 @@ def main():
 
     device = get_device()
 
-    print("\nUsing device:")
-    print(device)
+    print(
+        "\nUsing device:",
+        device,
+    )
 
     if device.type == "cuda":
 
@@ -519,31 +508,41 @@ def main():
     # Tokenizer
     # --------------------------------------------------------
 
-    print("\nLoading tokenizer...")
+    print(
+        "\nLoading tokenizer..."
+    )
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        MODEL_NAME
+    tokenizer = (
+        AutoTokenizer.from_pretrained(
+            MODEL_NAME
+        )
     )
 
     # --------------------------------------------------------
-    # Load raw datasets
+    # Datasets
     # --------------------------------------------------------
 
-    print("\nLoading English XNLI...")
+    print(
+        "\nLoading English XNLI..."
+    )
 
     english_dataset = load_dataset(
         "facebook/xnli",
         "en",
     )
 
-    print("Loading Hindi XNLI...")
+    print(
+        "Loading Hindi XNLI..."
+    )
 
     hindi_dataset = load_dataset(
         "facebook/xnli",
         "hi",
     )
 
-    print("\nRaw dataset sizes:")
+    print(
+        "\nRaw dataset sizes:"
+    )
 
     print(
         "English train:",
@@ -552,19 +551,29 @@ def main():
 
     print(
         "English validation:",
-        len(english_dataset["validation"]),
+        len(
+            english_dataset[
+                "validation"
+            ]
+        ),
     )
 
     print(
         "Hindi validation:",
-        len(hindi_dataset["validation"]),
+        len(
+            hindi_dataset[
+                "validation"
+            ]
+        ),
     )
 
     # --------------------------------------------------------
     # Prepare datasets
     # --------------------------------------------------------
 
-    print("\nPreparing English training data...")
+    print(
+        "\nPreparing English training data..."
+    )
 
     english_train = prepare_dataset(
         dataset=english_dataset["train"],
@@ -579,9 +588,13 @@ def main():
     )
 
     english_validation = prepare_dataset(
-        dataset=english_dataset["validation"],
+        dataset=english_dataset[
+            "validation"
+        ],
         tokenizer=tokenizer,
-        sample_size=args.validation_samples,
+        sample_size=(
+            args.validation_samples
+        ),
         max_length=args.max_length,
         seed=args.seed,
     )
@@ -591,14 +604,20 @@ def main():
     )
 
     hindi_validation = prepare_dataset(
-        dataset=hindi_dataset["validation"],
+        dataset=hindi_dataset[
+            "validation"
+        ],
         tokenizer=tokenizer,
-        sample_size=args.validation_samples,
+        sample_size=(
+            args.validation_samples
+        ),
         max_length=args.max_length,
         seed=args.seed,
     )
 
-    print("\nPrepared dataset sizes:")
+    print(
+        "\nPrepared dataset sizes:"
+    )
 
     print(
         "English train:",
@@ -619,57 +638,65 @@ def main():
     # Dynamic padding
     # --------------------------------------------------------
 
-    data_collator = DataCollatorWithPadding(
-        tokenizer=tokenizer,
-        return_tensors="pt",
+    data_collator = (
+        DataCollatorWithPadding(
+            tokenizer=tokenizer,
+            return_tensors="pt",
+        )
+    )
+
+    generator = torch.Generator()
+
+    generator.manual_seed(
+        args.seed
     )
 
     # --------------------------------------------------------
     # DataLoaders
     # --------------------------------------------------------
 
-    train_generator = torch.Generator()
-
-    train_generator.manual_seed(
-        args.seed
-    )
-
     train_loader = DataLoader(
         english_train,
         batch_size=args.batch_size,
         shuffle=True,
         collate_fn=data_collator,
-        generator=train_generator,
+        generator=generator,
         pin_memory=(
             device.type == "cuda"
         ),
     )
 
-    english_validation_loader = DataLoader(
-        english_validation,
-        batch_size=args.batch_size,
-        shuffle=False,
-        collate_fn=data_collator,
-        pin_memory=(
-            device.type == "cuda"
-        ),
+    english_validation_loader = (
+        DataLoader(
+            english_validation,
+            batch_size=args.batch_size,
+            shuffle=False,
+            collate_fn=data_collator,
+            pin_memory=(
+                device.type == "cuda"
+            ),
+        )
     )
 
-    hindi_validation_loader = DataLoader(
-        hindi_validation,
-        batch_size=args.batch_size,
-        shuffle=False,
-        collate_fn=data_collator,
-        pin_memory=(
-            device.type == "cuda"
-        ),
+    hindi_validation_loader = (
+        DataLoader(
+            hindi_validation,
+            batch_size=args.batch_size,
+            shuffle=False,
+            collate_fn=data_collator,
+            pin_memory=(
+                device.type == "cuda"
+            ),
+        )
     )
 
     # --------------------------------------------------------
     # Model
     # --------------------------------------------------------
 
-    print("\nLoading mBERT model...")
+    print(
+        "\nLoading mBERT model..."
+    )
 
     model = (
         AutoModelForSequenceClassification
@@ -681,9 +708,13 @@ def main():
         )
     )
 
-    model.to(device)
+    model.to(
+        device
+    )
 
-    print("Model loaded successfully.")
+    print(
+        "Model loaded successfully."
+    )
 
     # --------------------------------------------------------
     # Optimizer
@@ -696,42 +727,59 @@ def main():
     )
 
     # --------------------------------------------------------
-    # Evaluation before training
+    # Before training
     # --------------------------------------------------------
 
-    print("\n========================================")
-    print("BEFORE TRAINING")
-    print("========================================")
+    print(
+        "\n========================================"
+    )
+
+    print(
+        "BEFORE TRAINING"
+    )
+
+    print(
+        "========================================"
+    )
 
     before_english = evaluate_model(
         model=model,
-        dataloader=english_validation_loader,
+        dataloader=(
+            english_validation_loader
+        ),
         device=device,
         language_name="English",
     )
 
     before_hindi = evaluate_model(
         model=model,
-        dataloader=hindi_validation_loader,
+        dataloader=(
+            hindi_validation_loader
+        ),
         device=device,
         language_name="Hindi",
     )
 
     # --------------------------------------------------------
-    # Training history
+    # Training
     # --------------------------------------------------------
 
     history = []
 
     best_english_accuracy = -1.0
+    best_epoch_results = None
 
-    # --------------------------------------------------------
-    # Training
-    # --------------------------------------------------------
+    print(
+        "\n========================================"
+    )
 
-    print("\n========================================")
-    print("TRAINING")
-    print("========================================")
+    print(
+        "TRAINING"
+    )
+
+    print(
+        "========================================"
+    )
 
     for epoch in range(
         1,
@@ -753,20 +801,24 @@ def main():
             f"{training_loss:.4f}"
         )
 
-        # --------------------------------------------
-        # Evaluate after every epoch
-        # --------------------------------------------
+        # ----------------------------------------------------
+        # Evaluate after epoch
+        # ----------------------------------------------------
 
         english_results = evaluate_model(
             model=model,
-            dataloader=english_validation_loader,
+            dataloader=(
+                english_validation_loader
+            ),
             device=device,
             language_name="English",
         )
 
         hindi_results = evaluate_model(
             model=model,
-            dataloader=hindi_validation_loader,
+            dataloader=(
+                hindi_validation_loader
+            ),
             device=device,
             language_name="Hindi",
         )
@@ -776,23 +828,39 @@ def main():
             - hindi_results["accuracy"]
         )
 
+        print(
+            "\nCross-lingual transfer gap: "
+            f"{transfer_gap:.4f}"
+        )
+
         epoch_results = {
+
             "epoch": epoch,
+
             "training_loss": float(
                 training_loss
             ),
+
             "english_loss": (
                 english_results["loss"]
             ),
+
             "english_accuracy": (
-                english_results["accuracy"]
+                english_results[
+                    "accuracy"
+                ]
             ),
+
             "hindi_loss": (
                 hindi_results["loss"]
             ),
+
             "hindi_accuracy": (
-                hindi_results["accuracy"]
+                hindi_results[
+                    "accuracy"
+                ]
             ),
+
             "transfer_gap": float(
                 transfer_gap
             ),
@@ -802,19 +870,9 @@ def main():
             epoch_results
         )
 
-        print(
-            "\nCross-lingual transfer gap: "
-            f"{transfer_gap:.4f}"
-        )
-
-        # --------------------------------------------
-        # Save the model selected by ENGLISH
-        # validation accuracy.
-        #
-        # We deliberately do NOT select using Hindi
-        # accuracy because Hindi is our target
-        # language evaluation.
-        # --------------------------------------------
+        # ----------------------------------------------------
+        # Select best checkpoint using ENGLISH only
+        # ----------------------------------------------------
 
         if (
             english_results["accuracy"]
@@ -822,12 +880,13 @@ def main():
         ):
 
             best_english_accuracy = (
-                english_results["accuracy"]
+                english_results[
+                    "accuracy"
+                ]
             )
 
-            os.makedirs(
-                args.output_dir,
-                exist_ok=True,
+            best_epoch_results = (
+                epoch_results.copy()
             )
 
             print(
@@ -836,8 +895,18 @@ def main():
             )
 
             print(
+                f"Best epoch so far: "
+                f"{epoch}"
+            )
+
+            print(
                 f"Saving checkpoint to "
                 f"{args.output_dir}"
+            )
+
+            os.makedirs(
+                args.output_dir,
+                exist_ok=True,
             )
 
             model.save_pretrained(
@@ -849,14 +918,39 @@ def main():
             )
 
     # --------------------------------------------------------
-    # Final summary
+    # Safety check
     # --------------------------------------------------------
 
-    final_results = history[-1]
+    if best_epoch_results is None:
 
-    print("\n========================================")
-    print("FINAL RESULTS")
-    print("========================================")
+        raise RuntimeError(
+            "No best checkpoint was selected."
+        )
+
+    # --------------------------------------------------------
+    # Report BEST checkpoint, not last epoch
+    # --------------------------------------------------------
+
+    final_results = (
+        best_epoch_results
+    )
+
+    print(
+        "\n========================================"
+    )
+
+    print(
+        "BEST BASELINE CHECKPOINT RESULTS"
+    )
+
+    print(
+        "========================================"
+    )
+
+    print(
+        f"Best epoch: "
+        f"{final_results['epoch']}"
+    )
 
     print(
         "English accuracy: "
@@ -874,63 +968,89 @@ def main():
     )
 
     print(
-        "Best English validation accuracy: "
-        f"{best_english_accuracy:.4f}"
+        "English loss: "
+        f"{final_results['english_loss']:.4f}"
+    )
+
+    print(
+        "Hindi loss: "
+        f"{final_results['hindi_loss']:.4f}"
     )
 
     # --------------------------------------------------------
     # Save experiment metadata
     # --------------------------------------------------------
 
-    experiment_data = {
+    experiment_results = {
 
         "model_name": MODEL_NAME,
 
         "configuration": {
+
             "train_samples": (
                 args.train_samples
             ),
+
             "validation_samples": (
                 args.validation_samples
             ),
+
             "batch_size": (
                 args.batch_size
             ),
+
             "epochs": (
                 args.epochs
             ),
+
             "learning_rate": (
                 args.learning_rate
             ),
+
             "weight_decay": (
                 args.weight_decay
             ),
+
             "max_length": (
                 args.max_length
             ),
+
             "seed": (
                 args.seed
             ),
         },
 
         "before_training": {
-            "english": before_english,
-            "hindi": before_hindi,
+
+            "english": (
+                before_english
+            ),
+
+            "hindi": (
+                before_hindi
+            ),
         },
 
         "history": history,
+
+        "best_checkpoint": (
+            best_epoch_results
+        ),
 
         "best_english_accuracy": (
             best_english_accuracy
         ),
     }
 
-    save_metrics(
+    save_results(
         output_dir=args.output_dir,
-        experiment_data=experiment_data,
+        results=experiment_results,
     )
 
-    print("\nExperiment completed successfully.")
+    print(
+        "\nBaseline experiment "
+        "completed successfully."
+    )
 
 
 if __name__ == "__main__":
